@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NFC Tag Reader</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            text-align: center;
+            max-width: 400px;
+            width: 100%;
+            backdrop-filter: blur(10px);
+        }
+
+        .nfc-icon {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 20px;
+            background: linear-gradient(45deg, #4CAF50, #45a049);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 40px;
+            color: white;
+            transition: transform 0.3s ease;
+        }
+
+        .scanning .nfc-icon {
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 24px;
+        }
+
+        .status {
+            color: #666;
+            margin-bottom: 25px;
+            font-size: 16px;
+            min-height: 20px;
+        }
+
+        .status.error {
+            color: #e74c3c;
+        }
+
+        .status.success {
+            color: #27ae60;
+        }
+
+        .controls {
+            margin-bottom: 25px;
+        }
+
+        button {
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 25px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            margin: 5px;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+        }
+
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .tag-data {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 20px;
+            text-align: left;
+            margin-top: 20px;
+            border: 1px solid #e9ecef;
+        }
+
+        .tag-data h3 {
+            color: #333;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+
+        .data-item {
+            margin-bottom: 15px;
+            padding: 10px;
+            background: white;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+
+        .data-label {
+            font-weight: bold;
+            color: #555;
+            font-size: 14px;
+        }
+
+        .data-value {
+            color: #333;
+            word-break: break-all;
+            margin-top: 5px;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .support-info {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 10px;
+            padding: 15px;
+            margin-top: 20px;
+            color: #856404;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="nfc-icon" id="nfcIcon">📱</div>
+        <h1>NFC Tag Reader</h1>
+        <div class="status" id="status">Ready to scan NFC tags</div>
+        
+        <div class="controls">
+            <button id="startBtn" onclick="startScanning()">Start Scanning</button>
+            <button id="stopBtn" onclick="stopScanning()" disabled>Stop Scanning</button>
+        </div>
+
+        <div id="tagData" class="tag-data hidden">
+            <h3>Tag Data</h3>
+            <div id="dataContent"></div>
+        </div>
+
+        <div id="supportInfo" class="support-info hidden">
+            <strong>Requirements for NFC to work:</strong>
+            <br>• Android device with NFC enabled in Settings
+            <br>• Chrome browser (version 81+)
+            <br>• HTTPS connection (not file://)
+            <br>• Grant NFC permission when prompted
+            <br>• Try enabling "Experimental Web Platform features" in chrome://flags
+        </div>
+    </div>
+
+    <script>
+        let nfcReader = null;
+        let isScanning = false;
+
+        // Check browser and connection requirements
+        function checkRequirements() {
+            const status = document.getElementById('status');
+            const supportInfo = document.getElementById('supportInfo');
+            
+            // Check HTTPS
+            if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
+                showError('HTTPS required - Please serve this app over HTTPS');
+                supportInfo.classList.remove('hidden');
+                return false;
+            }
+            
+            // Check Web NFC support
+            if (!('NDEFReader' in window)) {
+                showError('Web NFC is not supported on this device/browser');
+                supportInfo.classList.remove('hidden');
+                return false;
+            }
+            
+            status.textContent = 'NFC supported - Ready to scan';
+            return true;
+        }
+        
+        // Initialize
+        if (!checkRequirements()) {
+            document.getElementById('startBtn').disabled = true;
+        }
+
+        async function startScanning() {
+            if (!checkRequirements()) {
+                return;
+            }
+
+            try {
+                showStatus('Requesting NFC permission...', 'success');
+                
+                nfcReader = new NDEFReader();
+                
+                // Request permission and start scanning
+                await nfcReader.scan();
+                isScanning = true;
+                
+                updateUI(true);
+                showStatus('Scanning for NFC tags... Bring a tag close to your device', 'success');
+                
+                // Listen for NFC readings
+                nfcReader.addEventListener('reading', ({ message, serialNumber }) => {
+                    showStatus('Tag detected!', 'success');
+                    displayTagData(message, serialNumber);
+                });
+
+                nfcReader.addEventListener('readingerror', () => {
+                    showError('Error reading NFC tag');
+                });
+
+            } catch (error) {
+                console.error('Error starting NFC scan:', error);
+                let errorMessage = '';
+                
+                switch(error.name) {
+                    case 'NotAllowedError':
+                        errorMessage = 'NFC permission denied. Please check:\n• NFC is enabled in device settings\n• Chrome has NFC permission\n• Try refreshing and allowing permission';
+                        break;
+                    case 'NotSupportedError':
+                        errorMessage = 'NFC is not supported on this device';
+                        break;
+                    case 'InvalidStateError':
+                        errorMessage = 'NFC is not available (may be disabled in settings)';
+                        break;
+                    case 'SecurityError':
+                        errorMessage = 'Security error - ensure you\'re using HTTPS';
+                        break;
+                    default:
+                        errorMessage = `Failed to start NFC scanning: ${error.message}`;
+                }
+                
+                showError(errorMessage);
+                updateUI(false);
+            }
+        }
+
+        async function stopScanning() {
+            if (nfcReader) {
+                try {
+                    // Note: There's no explicit stop method, but we can remove listeners
+                    nfcReader = null;
+                    isScanning = false;
+                    updateUI(false);
+                    showStatus('Scanning stopped');
+                    document.getElementById('tagData').classList.add('hidden');
+                } catch (error) {
+                    console.error('Error stopping scan:', error);
+                }
+            }
+        }
+
+        function displayTagData(message, serialNumber) {
+            const dataContent = document.getElementById('dataContent');
+            dataContent.innerHTML = '';
+
+            // Show serial number
+            if (serialNumber) {
+                addDataItem('Serial Number', serialNumber);
+            }
+
+            // Process NDEF records
+            if (message.records && message.records.length > 0) {
+                message.records.forEach((record, index) => {
+                    addDataItem(`Record ${index + 1} Type`, record.recordType);
+                    
+                    try {
+                        const textDecoder = new TextDecoder();
+                        const data = textDecoder.decode(record.data);
+                        addDataItem(`Record ${index + 1} Data`, data);
+                    } catch (error) {
+                        // If text decoding fails, show as hex
+                        const hexData = Array.from(new Uint8Array(record.data))
+                            .map(b => b.toString(16).padStart(2, '0'))
+                            .join(' ');
+                        addDataItem(`Record ${index + 1} Data (Hex)`, hexData);
+                    }
+                });
+            } else {
+                addDataItem('Status', 'No NDEF records found');
+            }
+
+            document.getElementById('tagData').classList.remove('hidden');
+        }
+
+        function addDataItem(label, value) {
+            const dataContent = document.getElementById('dataContent');
+            const item = document.createElement('div');
+            item.className = 'data-item';
+            item.innerHTML = `
+                <div class="data-label">${label}:</div>
+                <div class="data-value">${value}</div>
+            `;
+            dataContent.appendChild(item);
+        }
+
+        function updateUI(scanning) {
+            const container = document.querySelector('.container');
+            const startBtn = document.getElementById('startBtn');
+            const stopBtn = document.getElementById('stopBtn');
+            
+            if (scanning) {
+                container.classList.add('scanning');
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+            } else {
+                container.classList.remove('scanning');
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+            }
+        }
+
+        function showStatus(message, type = '') {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = `status ${type}`;
+        }
+
+        function showError(message) {
+            showStatus(message, 'error');
+            updateUI(false);
+        }
+
+        // Handle page visibility changes
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden && isScanning) {
+                // Optionally stop scanning when page is hidden
+                // stopScanning();
+            }
+        });
+    </script>
+</body>
+</html>
